@@ -109,7 +109,7 @@ func nestedStr(tokstr []string, docmap map[string]interface{}, currentID string)
 }
 
 // BulkIndex takes a set of documents as strings and indexes them into elasticsearch.
-func BulkIndex(docs []string, options Options) error {
+func BulkIndex(docs []string, options Options, errCountPtr *int) error {
 	if len(docs) == 0 {
 		return nil
 	}
@@ -230,7 +230,10 @@ func BulkIndex(docs []string, options Options) error {
 		if options.Verbose {
 			log.Println("Error details: ")
 			for _, v := range br.Items {
-				log.Printf("  %q\n", v.IndexAction.Error)
+				if v.IndexAction.Error.Type != "" {
+					*errCountPtr = *errCountPtr + 1
+					log.Printf("  %q\n", v.IndexAction.Error)
+				}
 			}
 		}
 		return fmt.Errorf("error during bulk operation, check error details, try less workers (lower -w value) or  increase thread_pool.bulk.queue_size in your nodes")
@@ -239,7 +242,7 @@ func BulkIndex(docs []string, options Options) error {
 }
 
 // Worker will batch index documents that come in on the lines channel.
-func Worker(id string, options Options, lines chan string, wg *sync.WaitGroup) {
+func Worker(id string, options Options, lines chan string, wg *sync.WaitGroup, errCountPtr *int) {
 	defer wg.Done()
 	var docs []string
 	counter := 0
@@ -249,11 +252,14 @@ func Worker(id string, options Options, lines chan string, wg *sync.WaitGroup) {
 		if counter%options.BatchSize == 0 {
 			msg := make([]string, len(docs))
 			if n := copy(msg, docs); n != len(docs) {
-				log.Fatalf("expected %d, but got %d", len(docs), n)
+				log.Printf("expected %d, but got %d", len(docs), n)
+				return
 			}
 
-			if err := BulkIndex(msg, options); err != nil {
-				log.Fatal(err)
+			if err := BulkIndex(msg, options, errCountPtr); err != nil {
+				log.Println("error in bulk indexing in ", options.Index)
+				log.Print(err)
+				continue
 			}
 			if options.Verbose {
 				log.Printf("[%s] @%d\n", id, counter)
@@ -266,11 +272,13 @@ func Worker(id string, options Options, lines chan string, wg *sync.WaitGroup) {
 	}
 	msg := make([]string, len(docs))
 	if n := copy(msg, docs); n != len(docs) {
-		log.Fatalf("expected %d, but got %d", len(docs), n)
+		log.Printf("expected %d, but got %d", len(docs), n)
+		*errCountPtr = *errCountPtr + len(docs)
+		return
 	}
 
-	if err := BulkIndex(msg, options); err != nil {
-		log.Fatal(err)
+	if err := BulkIndex(msg, options, errCountPtr); err != nil {
+		log.Println("error in bulk indexing in ", options.Index, " : ", err.Error())
 	}
 	if options.Verbose {
 		log.Printf("[%s] @%d\n", id, counter)
