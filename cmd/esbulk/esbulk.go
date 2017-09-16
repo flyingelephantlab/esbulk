@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/miku/esbulk"
+	"github.com/flyingelephantlab/esbulk"
 )
 
-// Application Version.
+// Version : Application Version
 const Version = "0.4.4"
 
 func main() {
@@ -134,10 +134,10 @@ func main() {
 
 	queue := make(chan string)
 	var wg sync.WaitGroup
-
+	var errCount = 0
 	for i := 0; i < *numWorkers; i++ {
 		wg.Add(1)
-		go esbulk.Worker(fmt.Sprintf("worker-%d", i), options, queue, &wg)
+		go esbulk.Worker(fmt.Sprintf("worker-%d", i), options, queue, &wg, &errCount)
 	}
 
 	client := &http.Client{}
@@ -226,7 +226,7 @@ func main() {
 		}
 		line = strings.TrimSpace(line)
 		queue <- line
-		counter += 1
+		counter++
 	}
 
 	close(queue)
@@ -244,6 +244,6 @@ func main() {
 
 	if *verbose {
 		rate := float64(counter) / elapsed.Seconds()
-		log.Printf("%d docs in %s at %0.3f docs/s with %d workers\n", counter, elapsed, rate, *numWorkers)
+		log.Printf("%d docs in %s at %0.3f docs/s with %d workers and %d errors\n", counter, elapsed, rate, *numWorkers, errCount)
 	}
 }
