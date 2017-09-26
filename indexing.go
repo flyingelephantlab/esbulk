@@ -109,7 +109,7 @@ func nestedStr(tokstr []string, docmap map[string]interface{}, currentID string)
 }
 
 // BulkIndex takes a set of documents as strings and indexes them into elasticsearch.
-func BulkIndex(docs []string, options Options, errCountPtr *int) error {
+func BulkIndex(docs []string, options Options, errCountPtr *int, logger *log.Logger) error {
 	if len(docs) == 0 {
 		return nil
 	}
@@ -232,7 +232,7 @@ func BulkIndex(docs []string, options Options, errCountPtr *int) error {
 			for _, v := range br.Items {
 				if v.IndexAction.Error.Type != "" {
 					*errCountPtr = *errCountPtr + 1
-					log.Printf("  %q\n", v.IndexAction.Error)
+					logger.Printf("  %q\n", v.IndexAction.Error)
 				}
 			}
 		}
@@ -242,7 +242,7 @@ func BulkIndex(docs []string, options Options, errCountPtr *int) error {
 }
 
 // Worker will batch index documents that come in on the lines channel.
-func Worker(id string, options Options, lines chan string, wg *sync.WaitGroup, errCountPtr *int) {
+func Worker(id string, options Options, lines chan string, wg *sync.WaitGroup, errCountPtr *int, logger *log.Logger) {
 	defer wg.Done()
 	var docs []string
 	counter := 0
@@ -252,17 +252,17 @@ func Worker(id string, options Options, lines chan string, wg *sync.WaitGroup, e
 		if counter%options.BatchSize == 0 {
 			msg := make([]string, len(docs))
 			if n := copy(msg, docs); n != len(docs) {
-				log.Printf("expected %d, but got %d", len(docs), n)
+				logger.Printf("expected %d, but got %d", len(docs), n)
 				return
 			}
 
-			if err := BulkIndex(msg, options, errCountPtr); err != nil {
-				log.Println("error in bulk indexing in ", options.Index)
-				log.Print(err)
+			if err := BulkIndex(msg, options, errCountPtr, logger); err != nil {
+				logger.Println("error in bulk indexing in ", options.Index)
+				logger.Print(err)
 				continue
 			}
 			if options.Verbose {
-				log.Printf("[%s] @%d\n", id, counter)
+				logger.Printf("[%s] @%d\n", id, counter)
 			}
 			docs = nil
 		}
@@ -272,21 +272,21 @@ func Worker(id string, options Options, lines chan string, wg *sync.WaitGroup, e
 	}
 	msg := make([]string, len(docs))
 	if n := copy(msg, docs); n != len(docs) {
-		log.Printf("expected %d, but got %d", len(docs), n)
+		logger.Printf("expected %d, but got %d", len(docs), n)
 		*errCountPtr = *errCountPtr + len(docs)
 		return
 	}
 
-	if err := BulkIndex(msg, options, errCountPtr); err != nil {
-		log.Println("error in bulk indexing in ", options.Index, " : ", err.Error())
+	if err := BulkIndex(msg, options, errCountPtr, logger); err != nil {
+		logger.Println("error in bulk indexing in ", options.Index, " : ", err.Error())
 	}
 	if options.Verbose {
-		log.Printf("[%s] @%d\n", id, counter)
+		logger.Printf("[%s] @%d\n", id, counter)
 	}
 }
 
 // PutMapping applies a mapping from a reader.
-func PutMapping(options Options, body io.Reader) error {
+func PutMapping(options Options, body io.Reader, logger *log.Logger) error {
 	link := fmt.Sprintf("%s://%s:%d/%s/_mapping/%s", options.Scheme, options.Host, options.Port, options.Index, options.DocType)
 	req, err := http.NewRequest("PUT", link, body)
 	if err != nil {
@@ -301,13 +301,13 @@ func PutMapping(options Options, body io.Reader) error {
 		return err
 	}
 	if options.Verbose {
-		log.Printf("applied mapping: %s", resp.Status)
+		logger.Printf("applied mapping: %s", resp.Status)
 	}
 	return resp.Body.Close()
 }
 
 // CreateIndex creates a new index.
-func CreateIndex(options Options) error {
+func CreateIndex(options Options, logger *log.Logger) error {
 	link := fmt.Sprintf("%s://%s:%d/%s", options.Scheme, options.Host, options.Port, options.Index)
 	req, err := http.NewRequest("GET", link, nil)
 	if err != nil {
@@ -351,13 +351,13 @@ func CreateIndex(options Options) error {
 		return errors.New(buf.String())
 	}
 	if options.Verbose {
-		log.Printf("created index: %s\n", resp.Status)
+		logger.Printf("created index: %s\n", resp.Status)
 	}
 	return nil
 }
 
 // DeleteIndex removes an index.
-func DeleteIndex(options Options) error {
+func DeleteIndex(options Options, logger *log.Logger) error {
 	link := fmt.Sprintf("%s://%s:%d/%s", options.Scheme, options.Host, options.Port, options.Index)
 	req, err := http.NewRequest("DELETE", link, nil)
 	if err != nil {
@@ -372,7 +372,7 @@ func DeleteIndex(options Options) error {
 		return err
 	}
 	if options.Verbose {
-		log.Printf("purged index: %s", resp.Status)
+		logger.Printf("purged index: %s", resp.Status)
 	}
 	return resp.Body.Close()
 }

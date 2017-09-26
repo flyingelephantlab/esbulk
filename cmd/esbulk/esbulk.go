@@ -18,11 +18,12 @@ import (
 	"github.com/flyingelephantlab/esbulk"
 )
 
+var globalLogger = log.New(os.Stdout, "global log ", log.LstdFlags|log.Lshortfile)
+
 // Version : Application Version
 const Version = "0.4.4"
 
 func main() {
-
 	version := flag.Bool("v", false, "prints current program version")
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to file")
 	memprofile := flag.String("memprofile", "", "write heap profile to file")
@@ -45,7 +46,7 @@ func main() {
 	if *cpuprofile != "" {
 		f, err := os.Create(*cpuprofile)
 		if err != nil {
-			log.Fatal(err)
+			globalLogger.Fatal(err)
 		}
 		pprof.StartCPUProfile(f)
 		defer pprof.StopCPUProfile()
@@ -57,7 +58,7 @@ func main() {
 	}
 
 	if *indexName == "" {
-		log.Fatal("index name required")
+		globalLogger.Fatal("index name required")
 	}
 
 	var file io.Reader = os.Stdin
@@ -65,7 +66,7 @@ func main() {
 	if flag.NArg() > 0 {
 		f, err := os.Open(flag.Arg(0))
 		if err != nil {
-			log.Fatalln(err)
+			globalLogger.Fatalln(err)
 		}
 		defer f.Close()
 		file = f
@@ -77,7 +78,7 @@ func main() {
 	if len(*user) > 0 {
 		parts := strings.Split(*user, ":")
 		if len(parts) != 2 {
-			log.Fatal("http basic auth syntax is: username:password")
+			globalLogger.Fatal("http basic auth syntax is: username:password")
 		}
 		username = parts[0]
 		password = parts[1]
@@ -100,19 +101,19 @@ func main() {
 	// older -host and -port are on defaults
 	if *host == "localhost" && *port == 9200 {
 		if err := options.SetServer(*server); err != nil {
-			log.Fatal(err)
+			globalLogger.Fatal(err)
 		}
 	}
 
 	if *purge {
-		if err := esbulk.DeleteIndex(options); err != nil {
-			log.Fatal(err)
+		if err := esbulk.DeleteIndex(options, globalLogger); err != nil {
+			globalLogger.Fatal(err)
 		}
 	}
 
 	// create index if not exists
-	if err := esbulk.CreateIndex(options); err != nil {
-		log.Fatal(err)
+	if err := esbulk.CreateIndex(options, globalLogger); err != nil {
+		globalLogger.Fatal(err)
 	}
 
 	if *mapping != "" {
@@ -122,13 +123,13 @@ func main() {
 		} else {
 			file, err := os.Open(*mapping)
 			if err != nil {
-				log.Fatal(err)
+				globalLogger.Fatal(err)
 			}
 			reader = bufio.NewReader(file)
 		}
-		err := esbulk.PutMapping(options, reader)
+		err := esbulk.PutMapping(options, reader, globalLogger)
 		if err != nil {
-			log.Fatal(err)
+			globalLogger.Fatal(err)
 		}
 	}
 
@@ -137,7 +138,7 @@ func main() {
 	var errCount = 0
 	for i := 0; i < *numWorkers; i++ {
 		wg.Add(1)
-		go esbulk.Worker(fmt.Sprintf("worker-%d", i), options, queue, &wg, &errCount)
+		go esbulk.Worker(fmt.Sprintf("worker-%d", i), options, queue, &wg, &errCount, globalLogger)
 	}
 
 	client := &http.Client{}
@@ -150,7 +151,7 @@ func main() {
 		req, err := http.NewRequest("PUT", fmt.Sprintf("%s://%s:%d/%s/_settings",
 			options.Scheme, options.Host, options.Port, options.Index), r)
 		if err != nil {
-			log.Fatal(err)
+			globalLogger.Fatal(err)
 		}
 		if options.Username != "" && options.Password != "" {
 			req.SetBasicAuth(options.Username, options.Password)
@@ -158,16 +159,16 @@ func main() {
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
-			log.Fatal(err)
+			globalLogger.Fatal(err)
 		}
 		if options.Verbose {
-			log.Printf("set index.refresh_interval to 1s: %s\n", resp.Status)
+			globalLogger.Printf("set index.refresh_interval to 1s: %s\n", resp.Status)
 		}
 		// flush
 		link := fmt.Sprintf("%s://%s:%d/%s/_flush", options.Scheme, options.Host, options.Port, options.Index)
 		req, err = http.NewRequest("POST", link, nil)
 		if err != nil {
-			log.Fatal(err)
+			globalLogger.Fatal(err)
 		}
 		if options.Username != "" && options.Password != "" {
 			req.SetBasicAuth(options.Username, options.Password)
@@ -175,10 +176,10 @@ func main() {
 		req.Header.Set("Content-Type", "application/json")
 		resp, err = client.Do(req)
 		if err != nil {
-			log.Fatal(err)
+			globalLogger.Fatal(err)
 		}
 		if options.Verbose {
-			log.Printf("index flushed: %s\n", resp.Status)
+			globalLogger.Printf("index flushed: %s\n", resp.Status)
 		}
 	}()
 
@@ -186,7 +187,7 @@ func main() {
 	req, err := http.NewRequest("PUT", fmt.Sprintf("%s://%s:%d/%s/_settings",
 		options.Scheme, options.Host, options.Port, options.Index), r)
 	if err != nil {
-		log.Fatal(err)
+		globalLogger.Fatal(err)
 	}
 	if options.Username != "" && options.Password != "" {
 		req.SetBasicAuth(options.Username, options.Password)
@@ -194,21 +195,21 @@ func main() {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		globalLogger.Fatal(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		log.Fatal(resp)
+		globalLogger.Fatal(resp)
 	}
 	if options.Verbose {
-		log.Printf("set index.refresh_interval to -1: %s\n", resp.Status)
+		globalLogger.Printf("set index.refresh_interval to -1: %s\n", resp.Status)
 	}
 
 	reader := bufio.NewReader(file)
 	if *gzipped {
 		zreader, err := gzip.NewReader(file)
 		if err != nil {
-			log.Fatal(err)
+			globalLogger.Fatal(err)
 		}
 		reader = bufio.NewReader(zreader)
 	}
@@ -222,7 +223,7 @@ func main() {
 			break
 		}
 		if err != nil {
-			log.Fatal(err)
+			globalLogger.Fatal(err)
 		}
 		line = strings.TrimSpace(line)
 		queue <- line
@@ -236,7 +237,7 @@ func main() {
 	if *memprofile != "" {
 		f, err := os.Create(*memprofile)
 		if err != nil {
-			log.Fatal(err)
+			globalLogger.Fatal(err)
 		}
 		pprof.WriteHeapProfile(f)
 		f.Close()
@@ -244,6 +245,6 @@ func main() {
 
 	if *verbose {
 		rate := float64(counter) / elapsed.Seconds()
-		log.Printf("%d docs in %s at %0.3f docs/s with %d workers and %d errors\n", counter, elapsed, rate, *numWorkers, errCount)
+		globalLogger.Printf("%d docs in %s at %0.3f docs/s with %d workers and %d errors\n", counter, elapsed, rate, *numWorkers, errCount)
 	}
 }
